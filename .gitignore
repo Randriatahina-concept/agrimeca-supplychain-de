@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+landing/
+*.db
+dbt/agrimeca/target/
+dbt/agrimeca/dbt_packages/
+dbt/agrimeca/logs/
+profiles.yml
+.env
+.DS_Store
