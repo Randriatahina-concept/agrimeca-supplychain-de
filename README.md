@@ -13,7 +13,7 @@ Projet de data engineering de bout en bout : ingestion d'une **API ERP** (OAuth,
 3. [L'API ERP simulée](#lapi-erp-simulée)
 4. [Configurations réalisées](#configurations-réalisées)
 5. [Ingestion API vers le Volume](#ingestion-api-vers-le-volume)
-6. [Travailler en local](#travailler-en-local)
+6. [Exécution locale et exécution Databricks](#exécution-locale-et-exécution-databricks)
 7. [Feuille de route](#feuille-de-route)
 8. [Structure du dépôt](#structure-du-dépôt)
 9. [Sécurité, qualité et coûts](#sécurité-qualité-et-coûts)
@@ -208,32 +208,92 @@ Logique de la boucle d'ingestion :
 
 Le partitionnement `ingest_date=…/run_id=…` permet de retrouver, recharger ou purger une journée ou une exécution, et Spark le reconnaît comme des colonnes de partition.
 
-## Travailler en local
+## Exécution locale et exécution Databricks
 
-Le code d'ingestion vit dans un module (`src/erp_ingest/`) sans dépendance à Databricks : il s'exécute gratuitement sur le poste de travail, puis le notebook Databricks l'importe.
+Le code d'ingestion vit dans un module, `src/erp_ingest/simple_ingest.py`, sans aucune dépendance à Databricks. Le **même code** s'exécute à deux endroits ; seuls la source des secrets et la destination des fichiers changent.
 
-```bash
-export ERP_BASE_URL=$(az keyvault secret show --vault-name <key-vault> -n erp-base-url --query value -o tsv)
-export ERP_CLIENT_SECRET=$(az keyvault secret show --vault-name <key-vault> -n erp-client-secret --query value -o tsv)
-
-python scripts/ingest_local.py     # écrit dans landing/erp/
-ruff check src scripts
-pytest -q
+```text
+                         GitHub (le code, une seule version)
+                          ▲ git push            │ Pull
+                          │                     ▼
+TON POSTE (atelier, gratuit)              DATABRICKS (pipeline, facturé)
+scripts/ingest_local.py                   notebooks/01_ingest
+        │                                         │
+        ▼                                         ▼
+landing/erp/…  (local, jamais versionné)   /Volumes/supplychain/landing/erp/…
+        ✗ aucune donnée ne circule entre les deux ✗
 ```
 
-Contrôle rapide des fichiers avec DuckDB, sans Spark :
+Le **code** voyage via GitHub ; les **données** restent là où le code s'est exécuté. Une exécution locale sert à valider le code : elle n'alimente pas Databricks. En production, c'est Databricks qui appelle l'API.
+
+### Comparaison des deux configurations
+
+| Élément | Exécution locale | Exécution Databricks |
+| --- | --- | --- |
+| Lanceur | `scripts/ingest_local.py` | notebook `notebooks/01_ingest` |
+| Calcul | Python du poste, dans `.venv` | serverless Databricks |
+| Coût | gratuit (hors appels à l'API Azure) | DBU facturés |
+| URL de l'API | `os.environ["ERP_BASE_URL"]` | `dbutils.secrets.get("erp", "erp-base-url")` |
+| Secret client | `os.environ["ERP_CLIENT_SECRET"]` | `dbutils.secrets.get("erp", "erp-client-secret")` |
+| Origine des secrets | Key Vault, lu par `az keyvault secret show` | Key Vault, lu via le secret scope `erp` |
+| Identifiant client | `ERP_CLIENT_ID`, défaut `agrimeca-data` | `"agrimeca-data"` |
+| Destination | `landing/erp` (relatif au dossier courant) | `/Volumes/supplychain/landing/erp` |
+| Création des dossiers | `os.makedirs` (dans le module) | `os.makedirs` (le même : Python écrit aussi dans `/Volumes`) |
+| Import du module | automatique (`pip install -e .`) | `sys.path.insert(0, "../src")` |
+| Durée de vie des secrets | le terminal où les `export` ont été faits | permanente, via le scope |
+| Vérification des fichiers | DuckDB, explorateur de VS Code | `dbutils.fs.ls`, *Catalog → Volumes* |
+| Suite du pipeline | aucune | Auto Loader → Bronze → dbt |
+
+### Exécution locale, pas à pas
+
+Tout se fait **dans le même terminal**, **depuis la racine du dépôt** :
 
 ```bash
-python -c "import duckdb; print(duckdb.sql(\"SELECT _run_id, sum(meta.count) FROM read_json('landing/erp/suppliers/*/*/page_*.json') GROUP BY 1\"))"
+cd ~/…/agrimeca-supplychain-de           # l'invite doit se terminer par agrimeca-supplychain-de
+source .venv/bin/activate                # (.venv) apparaît au début de l'invite
+az login                                 # si la session Azure a expiré
+
+KV=<key-vault>
+export ERP_BASE_URL=$(az keyvault secret show --vault-name $KV -n erp-base-url --query value -o tsv)
+export ERP_CLIENT_SECRET=$(az keyvault secret show --vault-name $KV -n erp-client-secret --query value -o tsv)
+echo $ERP_BASE_URL                        # doit afficher l'URL de l'API
+
+curl -s -o /dev/null -w "%{http_code}\n" "$ERP_BASE_URL/docs"   # 200 attendu ; 404 = API en veille
+python scripts/ingest_local.py
 ```
 
-Dans Databricks, le notebook se réduit à :
+Résultat attendu :
+
+```text
+suppliers : 22 pages, 21600 enregistrements -> landing/erp/suppliers/ingest_date=20261031/run_id=20261031T192623Z-174481
+```
+
+Contrôle des fichiers avec DuckDB, en SQL et sans Spark :
+
+```bash
+pip install duckdb
+python -c "import duckdb; print(duckdb.sql(\"SELECT _run_id, count(*) AS pages, sum(meta.count) AS enregistrements FROM read_json('landing/erp/suppliers/*/*/page_*.json') GROUP BY 1\"))"
+```
+
+Points d'attention :
+
+- **Variables d'environnement** : elles n'existent que dans le terminal qui les a définies et dans les programmes lancés depuis celui-ci. Un nouveau terminal ou le bouton ▶ de VS Code ne les voient pas (`KeyError: 'ERP_BASE_URL'`). Elles ne sont écrites nulle part sur le disque, ce qui est voulu.
+- **Dossier courant** : `landing/erp` est un chemin relatif. Lancé depuis le dossier parent, le script écrirait hors du dépôt.
+- **`landing/` n'est jamais versionné** : `git status` ne doit pas le lister. Les fichiers locaux peuvent être supprimés à tout moment (`rm -rf landing`).
+
+### Exécution Databricks
+
+Le notebook `notebooks/01_ingest` importe le module au lieu de dupliquer le code :
 
 ```python
+# Cellule 1 - rendre le dossier src importable
 import os, sys
-sys.path.insert(0, os.path.abspath("../src"))
+sys.path.insert(0, os.path.abspath("../src"))   # le notebook s'exécute depuis notebooks/
 from erp_ingest.simple_ingest import ingest_entity
+```
 
+```python
+# Cellule 2 - ingestion vers le Volume
 ingest_entity(
     base_url=dbutils.secrets.get("erp", "erp-base-url").rstrip("/"),
     client_id="agrimeca-data",
@@ -243,7 +303,32 @@ ingest_entity(
 )
 ```
 
-Cycle de travail : coder et tester en local → `git push` → *Pull* dans Databricks → une exécution de validation.
+Vérification :
+
+```python
+for day in dbutils.fs.ls("/Volumes/supplychain/landing/erp/suppliers"):
+    for run in dbutils.fs.ls(day.path):
+        print(day.name, run.name, "→", len(dbutils.fs.ls(run.path)), "fichier(s)")
+```
+
+### Ce qu'il faut mettre à jour, et où
+
+| Changement | En local | Sur Databricks |
+| --- | --- | --- |
+| Modification du code du module | modifier `src/erp_ingest/…`, relancer `python scripts/ingest_local.py`, `ruff check`, puis `git push` | *Pull* dans le Git folder, puis **redémarrer la session** du notebook : Python garde l'ancienne version du module en mémoire |
+| Modification du notebook | `git pull` pour la récupérer | *Commit & Push* depuis Databricks |
+| Nouvelle entité (`parts`, `purchase-orders`) | changer `entity=` dans `scripts/ingest_local.py` | changer `entity=` dans le notebook |
+| Changement d'URL de l'API (domaine personnalisé…) | rien dans le code : refaire les `export` après mise à jour du Key Vault | rien : le scope lit Key Vault en direct |
+| Rotation du secret client | mettre à jour Key Vault **et** le secret de la Container App, puis refaire les `export` | rien de plus : le scope lit la nouvelle valeur |
+| Nouvelle dépendance Python | l'ajouter à `pyproject.toml`, puis `pip install -e ".[dev]"` | `%pip install …` en tête du notebook, ou bibliothèque du Job |
+| Nouveau terminal ou retour après une pause | `source .venv/bin/activate` et refaire les `export` | *Run all* : la session serverless a pu s'arrêter |
+
+### Cycle de travail
+
+1. Coder et tester sur le poste : `python scripts/ingest_local.py`, `ruff check`, `pytest`.
+2. Versionner : `git add`, `git commit`, `git push`.
+3. Dans Databricks : *Pull*, redémarrer la session, **une seule** exécution de validation.
+4. Après une modification faite dans Databricks : *Commit & Push*, puis `git pull` sur le poste.
 
 ## Feuille de route
 
@@ -251,7 +336,6 @@ La démarche suit une **tranche verticale** : le pipeline complet est d'abord co
 
 | Étape | Contenu |
 | --- | --- |
-| Module d'ingestion | code réutilisable dans `src/erp_ingest/`, exécutable en local et sur Databricks |
 | Bronze avec Auto Loader | `cloudFiles`, checkpoint par table, `trigger(availableNow=True)`, idempotence vérifiée par une double exécution |
 | Ingestion robuste | nombre de tentatives limité avec attente croissante, incrémental via `updated_since` et watermark `as_of`, reprise après incident grâce au curseur sauvegardé, journal `ops.ingestion_runs` |
 | Tests | `pytest` + `responses` : pagination, renouvellement du jeton, `429`, reprise, incrémental |
@@ -303,6 +387,9 @@ agrimeca-supplychain-de/
 | Symptôme | Cause | Solution |
 | --- | --- | --- |
 | `404` sur toutes les routes de l'API | Container App arrêtée | `az containerapp start …` |
+| `KeyError: 'ERP_BASE_URL'` en local | variables non définies dans ce terminal, ou script lancé avec le bouton ▶ | refaire les `export` et lancer le script depuis le même terminal |
+| `ModuleNotFoundError: erp_ingest` | projet non installé dans le `.venv` actif | `source .venv/bin/activate` puis `pip install -e ".[dev]"` |
+| ancienne version du module utilisée sur Databricks | module déjà importé dans la session | redémarrer la session après le *Pull* |
 | `401` en cours d'ingestion | jeton expiré (15 min) ou API redémarrée | renouveler le jeton et refaire l'appel |
 | `NameError` dans un notebook | session redémarrée, cellules précédentes non réexécutées | *Run all* depuis la première cellule |
 | `NameError` sur un paramètre de fonction | lignes hors de la fonction (indentation) | décaler le bloc sous le `def` |
