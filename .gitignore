@@ -11,3 +11,4 @@ dbt/agrimeca/logs/
 profiles.yml
 .env
 .DS_Store
+lakehouse/
