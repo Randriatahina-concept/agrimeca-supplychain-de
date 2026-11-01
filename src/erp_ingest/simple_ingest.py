@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime, timezone
 
 import requests
-import requests
 
 # Erreurs réseau passagères : délai dépassé, connexion refusée, ou coupée pendant la réponse
 NETWORK_ERRORS = (
