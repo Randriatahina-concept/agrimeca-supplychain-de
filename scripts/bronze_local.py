@@ -1,9 +1,9 @@
 """Bronze en local avec PySpark : landing/erp (JSON par page) -> lakehouse/bronze (Parquet).
- 
+
 Même transformation que le notebook Databricks 02_bronze_autoloader, en mode batch :
 une ligne par enregistrement, JSON brut conservé, colonnes de traçabilité, doublons compris.
 Le nettoyage (dédoublonnage, dates, devises…) est le travail du Silver.
- 
+
 Usage, depuis la racine du dépôt :
     python scripts/bronze_local.py                    # les trois entités
     python scripts/bronze_local.py suppliers          # une seule
