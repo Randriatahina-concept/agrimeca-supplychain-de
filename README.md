@@ -14,10 +14,11 @@ Projet de data engineering de bout en bout : ingestion d'une **API ERP** (OAuth,
 4. [Configurations réalisées](#configurations-réalisées)
 5. [Ingestion API vers le Volume](#ingestion-api-vers-le-volume)
 6. [Exécution locale et exécution Databricks](#exécution-locale-et-exécution-databricks)
-7. [Feuille de route](#feuille-de-route)
-8. [Structure du dépôt](#structure-du-dépôt)
-9. [Sécurité, qualité et coûts](#sécurité-qualité-et-coûts)
-10. [Dépannage](#dépannage)
+7. [Volumétrie traitée et performances](#volumétrie-traitée-et-performances)
+8. [Feuille de route](#feuille-de-route)
+9. [Structure du dépôt](#structure-du-dépôt)
+10. [Sécurité, qualité et coûts](#sécurité-qualité-et-coûts)
+11. [Dépannage](#dépannage)
 
 ---
 
@@ -373,6 +374,67 @@ for day in dbutils.fs.ls("/Volumes/supplychain/landing/erp/suppliers"):
 3. Dans Databricks : *Pull*, redémarrer la session, **une seule** exécution de validation.
 4. Après une modification faite dans Databricks : *Commit & Push*, puis `git pull` sur le poste.
 
+## Volumétrie traitée et performances
+
+### Données ingérées
+
+Mesures du 1er et du 2 novembre 2026, sur le poste local (zone de dépôt `landing/erp`) puis en Bronze :
+
+| Entité | Pages | Lignes en zone de dépôt | Enregistrements distincts |
+| --- | --- | --- | --- |
+| Fournisseurs | 2 runs × 22 pages de 1 000 | 43 200 | 21 600 |
+| Articles | 400 pages de 1 000 | 399 958 | 399 958 |
+| Commandes (5 runs, doublons compris) | — | 2 142 400 | 872 000 |
+| Commandes (photo complète retenue) | 872 pages de 1 000 + 2 092 pages de 200 | 1 290 380 | 1 290 380 |
+| Lignes de commande (JSON imbriqué, mesurées sur les 872 000 premières commandes) | — | ~3,48 millions | — |
+
+L'historique initial est généré au déploiement (`SCALE=10`), puis le simulateur d'activité ajoute environ 12 000 commandes par heure (1 à 7 lignes chacune) tant que l'API tourne. La photo complète correspond à l'état du 1er novembre, 12 h 01 UTC ; les commandes créées ou modifiées depuis relèvent de l'ingestion incrémentale.
+
+Défauts mesurés sur ces volumes : 10 % de dates hors format ISO (`jj/mm/aaaa` et epoch en millisecondes), 2 % de devises manquantes, 1 % de quantités aberrantes (négatives ou multipliées par 1 000), 59 % de doublons de commandes dus aux runs relancés.
+
+### Ingestion : débit et robustesse
+
+| Mesure | Valeur |
+| --- | --- |
+| Débit de l'API sur les commandes | ~1 page de 200 commandes toutes les 2 à 3 s, soit ~70 à 100 commandes/s |
+| Reprise après interruption | 418 380 commandes en ~1 h 30, sans incident, à partir du dernier curseur au lieu de la page 1 |
+| Chargement complet estimé sans reprise | 5 à 6 h |
+
+Optimisations côté ingestion :
+
+- **taille de page par entité** : 1 000 pour les fournisseurs et les articles, 200 pour les commandes, dont la préparation côté API est lourde (JSON imbriqué) ;
+- **reprise automatique** sur `401` (nouveau jeton), `429` (`Retry-After`), `500/503`, délais dépassés et connexions coupées (jusqu'à 5 essais avec attente croissante) ;
+- **reprise d'un run interrompu** à partir du `next_cursor` de la dernière page valide (`--resume`) : aucune page relue, aucun doublon ajouté ;
+- **pagination par curseur figée** (`as_of`) : une photo cohérente même pendant que le simulateur modifie les données ;
+- **écriture page par page** : un arrêt ne perd que la page en cours.
+
+### Bronze : traitement avec PySpark
+
+Le même traitement existe en deux versions qui partagent les mêmes fonctions Spark : `scripts/bronze_local.py` (PySpark local, batch, Parquet) pour la mise au point gratuite, et le notebook `02_bronze_autoloader` (Auto Loader, Delta) sur Databricks.
+
+| Choix | Effet sur le traitement |
+| --- | --- |
+| Lecture `wholetext` : un fichier = une page = une ligne | pas de découpage ligne à ligne d'un JSON multi-lignes ; chaque fichier est une unité de travail indépendante, répartie sur les cœurs disponibles |
+| Schéma déclaré et minimal (`data ARRAY<STRING>, _run_id, _fetched_at`) | **aucune inférence de schéma** : Spark n'a pas à parcourir tous les fichiers une première fois pour deviner les types ; pas de dérive de schéma ni de valeurs perdues sur les dates mal formées |
+| `pathGlobFilter = page_*.json` + `recursiveFileLookup` | seules les pages sont lues, dans toute l'arborescence `ingest_date=…/run_id=…` |
+| `explode` + `get_json_object` sur deux champs seulement (`id`, `audit.updated_at`) | on n'extrait que ce qui sert au dédoublonnage ; l'enregistrement complet reste en texte dans `payload` |
+| `_metadata.file_path` capturé dès la lecture | traçabilité de chaque ligne jusqu'à son fichier source, sans coût de jointure |
+| Écriture Parquet partitionnée par `_run_id` | stockage colonnaire compressé ; lecture d'un seul run sans parcourir les autres (*partition pruning*) ; rechargement ou purge d'un run isolé |
+| `local[*]`, 4 Go pour le driver, fuseau UTC | tous les cœurs du poste utilisés ; horodatages cohérents avec l'API |
+| Évaluation paresseuse : une seule action d'écriture par table | Spark optimise l'ensemble lecture → transformation → écriture en un seul plan |
+| Sur Databricks : Auto Loader, checkpoint, `trigger(availableNow=True)` | chaque exécution ne lit que les **nouveaux** fichiers, puis s'arrête : le coût suit le volume de nouveautés, pas le volume total |
+
+Résultat en local : `erp_suppliers` 43 200 lignes (21 600 identifiants distincts) et `erp_parts` 399 958 lignes, contrôlés par relecture des Parquet ; les commandes (2,1 millions de lignes) passent par le même code. Le Bronze conserve volontairement les doublons ; le dédoublonnage est la première règle du Silver.
+
+### Choix d'outils selon le volume
+
+| Besoin | Outil | Pourquoi |
+| --- | --- | --- |
+| Explorer et contrôler des millions de lignes JSON ou Parquet | DuckDB | SQL direct sur les fichiers, sans serveur, en quelques secondes |
+| Construire une couche du pipeline | PySpark (local puis Databricks) | même code dans les deux environnements, passage à l'échelle sur cluster |
+| Charger l'historique depuis une API lente | poste local, puis copie vers le Volume (`databricks fs cp`) | aucun calcul cloud facturé pendant l'attente de l'API |
+| Alimenter le pipeline au quotidien | Job Databricks, ingestion incrémentale | quelques pages par run au lieu de plusieurs milliers |
+
 ## Feuille de route
 
 La démarche suit une **tranche verticale** : le pipeline complet est d'abord construit pour les fournisseurs, puis étendu aux articles et aux commandes.
@@ -380,7 +442,7 @@ La démarche suit une **tranche verticale** : le pipeline complet est d'abord co
 | Étape | Contenu |
 | --- | --- |
 | Bronze avec Auto Loader | `cloudFiles`, checkpoint par table, `trigger(availableNow=True)`, idempotence vérifiée par une double exécution |
-| Ingestion robuste | nombre de tentatives limité avec attente croissante, incrémental via `updated_since` et watermark `as_of`, reprise après incident grâce au curseur sauvegardé, journal `ops.ingestion_runs` |
+| Ingestion incrémentale | `updated_since` et watermark `as_of` mémorisé entre deux runs, journal `ops.ingestion_runs` (la reprise sur curseur et les nouveaux essais sont en place) |
 | Tests | `pytest` + `responses` : pagination, renouvellement du jeton, `429`, reprise, incrémental |
 | dbt — Silver | sources Bronze, staging (extraction du JSON, typage, dates multi-formats), dédoublonnage des fournisseurs, conversion EUR avec les taux BCE, quarantaine des lignes invalides, historisation SCD2 |
 | dbt — Gold | `dim_supplier`, `dim_part`, `fact_po_line` (incrémental `MERGE`), KPI mensuels, fiche fournisseur, délais P50/P90, commandes ouvertes |
