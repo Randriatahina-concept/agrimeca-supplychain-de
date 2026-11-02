@@ -9,8 +9,10 @@ Usage, depuis la racine du dépôt :
     python scripts/bronze_local.py suppliers          # une seule
 """
 import sys
+
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+
 LANDING = "landing/erp"
 BRONZE = "lakehouse/bronze"
 TABLES = {
@@ -50,15 +52,15 @@ def bronze_entity(entity: str, table_name: str):
 # 3. Écriture : reconstruction complète, partitionnée par run (relancer donne le même résultat)
     path = f"{BRONZE}/{table_name}"
     records.write.mode("overwrite").partitionBy("_run_id").parquet(path)
-    
+
     # 4. Contrôle
     df = spark.read.parquet(path)
     print(f"{table_name} : {df.count()} lignes, {df.select('source_id').distinct().count()} ids distincts")
     df.groupBy("_run_id").count().orderBy("_run_id").show(truncate=False)
 
 # appel de la fonction pour chaque entité passée en argument recupéré du terminal, ou toutes les entités du dictionnaire TABLES
-entities = sys.argv[1:] or list(TABLES) 
+entities = sys.argv[1:] or list(TABLES)
 for entity in entities:
     bronze_entity(entity, TABLES[entity])
- 
+
 spark.stop()

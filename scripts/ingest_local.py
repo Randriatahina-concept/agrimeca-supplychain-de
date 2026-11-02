@@ -1,13 +1,26 @@
-"""Lanceur local : python scripts/ingest_local.py [entité ...]  (après : source scripts/env.sh)"""
+"""Lanceur local (après : source scripts/env.sh)
+
+    python scripts/ingest_local.py                         # les trois entités, depuis le début
+    python scripts/ingest_local.py parts                   # une entité
+    python scripts/ingest_local.py purchase-orders --resume <dossier du run interrompu>
+"""
 import os
 import sys
 
-from erp_ingest.simple_ingest import ingest_entity
+from erp_ingest.simple_ingest import ingest_entity, last_cursor
 
-# Taille de page par entité : les commandes (JSON imbriqué) sont lourdes à préparer pour l'API
 PAGE_SIZES = {"suppliers": 1000, "parts": 1000, "purchase-orders": 200}
 
-entities = sys.argv[1:] or ["suppliers", "parts", "purchase-orders"]
+args = sys.argv[1:]
+start_cursor = None
+if "--resume" in args:
+    i = args.index("--resume")
+    start_cursor = last_cursor(args[i + 1])
+    args = args[:i] + args[i + 2:]
+    if start_cursor is None:
+        sys.exit("Ce run était déjà complet : rien à reprendre.")
+
+entities = args or ["suppliers", "parts", "purchase-orders"]
 
 for entity in entities:
     ingest_entity(
@@ -17,4 +30,5 @@ for entity in entities:
         entity=entity,
         landing="landing/erp",
         page_size=PAGE_SIZES.get(entity, 1000),
+        start_cursor=start_cursor,
     )
