@@ -83,6 +83,49 @@ Chaque réponse de liste a la même forme :
 - **`meta.as_of`** fige l'instant de lecture et sert de *watermark* pour l'incrémental.
 - **Contraintes reproduites volontairement** : 120 appels par minute (`429` + `Retry-After`), environ 5 % d'erreurs `500/503`, jeton expirant, données de qualité variable.
 
+### Volumétrie
+
+La base SQLite est générée dans l'image au déploiement (`ARG SCALE` du `Dockerfile`). Le déploiement actuel utilise `SCALE=10` :
+
+| Fournisseurs | Articles | Commandes | Lignes de commande |
+| --- | --- | --- | --- |
+| ~21 600 (doublons inclus) | ~400 000 | ~1 500 000 | ~6 000 000 |
+
+### Simulateur d'activité
+
+Pour que l'ingestion incrémentale ait toujours quelque chose à récupérer, l'API embarque un simulateur qui fait « vivre » l'ERP. Au démarrage du conteneur, `start.sh` lance deux processus :
+
+1. `simulate_activity.py`, en tâche de fond, qui modifie la base SQLite à intervalle régulier ;
+2. l'API (`uvicorn api:app`), qui expose cette base.
+
+À chaque tick (toutes les `SIMULATE_INTERVAL` secondes, 60 par défaut, avec `SIMULATE_NEW` = 200) :
+
+| Action | Volume par tick | Effet sur les données exposées |
+| --- | --- | --- |
+| Nouvelles commandes | `SIMULATE_NEW`, chacune avec 1 à 7 lignes | statut `OPEN`, devise manquante dans 2 % des cas |
+| Réceptions | jusqu'à `SIMULATE_NEW` commandes ouvertes de 3 à 120 jours | 70 % `RECEIVED`, 30 % `PARTIALLY_RECEIVED` ; date et quantité reçues sur les lignes |
+| Annulations | `SIMULATE_NEW / 50` | statut `CANCELLED` |
+| Suppressions logiques | `SIMULATE_NEW / 100` | `deleted: true` |
+| Fournisseurs renommés | 2 | nom variant (`Tornor SAS` → `TORNOR SAS.`), pour tester l'historisation SCD2 |
+| Prix d'articles | `SIMULATE_NEW / 10` | `list_price` + 3 % |
+
+Chaque modification met à jour `audit.updated_at`, ce qui la rend visible par `updated_since`. Avec les réglages par défaut et une API allumée en continu, cela représente environ 12 000 nouvelles commandes par heure.
+
+Deux comportements à connaître :
+
+- **pas d'activité en veille** : avec `--min-replicas 0`, le conteneur s'arrête faute d'appels, et le simulateur avec lui ;
+- **état éphémère** : la base vit sur le disque du conteneur. Chaque redémarrage (sortie de veille, nouvelle révision, incident) la ramène à son état de construction ; les commandes créées ou modifiées par le simulateur disparaissent. Le Bronze garde ce qui a déjà été lu, et le Silver retient la version la plus récente de chaque enregistrement.
+
+Réglages :
+
+| Objectif | Commande |
+| --- | --- |
+| Volume réduit, pour des runs incrémentaux courts | `az containerapp update -n erp-api -g <resource-group> --set-env-vars SIMULATE_NEW=20 SIMULATE_INTERVAL=300` |
+| Données figées, sans activité | `az containerapp update -n erp-api -g <resource-group> --set-env-vars SIMULATE_INTERVAL=0` |
+| État conservé entre deux redémarrages | monter un partage Azure Files dans la Container App et y placer `erp.db` |
+
+Chaque changement de variable d'environnement crée une nouvelle révision, et réinitialise donc la base.
+
 ## Configurations réalisées
 
 ### 1. Déploiement de l'API sur Azure Container Apps
