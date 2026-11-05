@@ -32,5 +32,4 @@ clean-targets:         # directories to be removed by `dbt clean`
 models:
   agrimeca:
     # Config indicated by + and applies to all files under models/example/
-    example:
-      +materialized: view
+      +materialized: table # chaque modèle créé une table Delta dans le catalogue de données Unity Catalog

@@ -1,0 +1,14 @@
+## Permet de tester le modèle dans dbt Cloud, en cliquant sur "Run" dans l'interface web.
+version: 2                                   # version du format des fichiers YAML de dbt
+
+models:                                      # les modèles décrits dans ce fichier
+  - name: stg_erp__suppliers                 # nom exact du fichier .sql, sans l'extension
+    description: Fournisseurs de l'ERP, une ligne par fournisseur, dernière version connue.
+    columns:
+      - name: supplier_id
+        data_tests: [not_null, unique]       # La colonne supplier_id est la clé primaire de la table, donc elle ne doit jamais être vide et doit être unique. 
+      - name: default_currency
+        data_tests:
+          - accepted_values:                 # la devise doit faire partie de cette liste
+              arguments:
+                values: ['EUR', 'PLN', 'CNY', 'USD', 'GBP', 'INR', 'TRY']
