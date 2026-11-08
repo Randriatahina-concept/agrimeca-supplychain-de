@@ -19,4 +19,5 @@ with ranked as (
 
 select * except (version_rank)
 from ranked
-where version_rank = 1
+where version_rank = 1 -- ne garder que la version la plus récente de chaque fournisseur
+
