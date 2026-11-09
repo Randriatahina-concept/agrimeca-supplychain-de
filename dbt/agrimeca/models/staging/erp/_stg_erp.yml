@@ -1,4 +1,4 @@
-## Permet de tester le modèle dans dbt Cloud, en cliquant sur "Run" dans l'interface web.
+## Permet de tester le modèle via dbt core, en cliquant sur "Run" dans l'interface web.
 version: 2                                   # version du format des fichiers YAML de dbt
 
 models:                                      # les modèles décrits dans ce fichier
@@ -12,3 +12,13 @@ models:                                      # les modèles décrits dans ce fic
           - accepted_values:                 # la devise doit faire partie de cette liste
               arguments:
                 values: ['EUR', 'PLN', 'CNY', 'USD', 'GBP', 'INR', 'TRY']
+# Deuxième modèle de staging: erp_parts pour les articles 
+  - name: stg_erp__parts
+    description: Articles de l'ERP, une ligne par article, dernière version connue.
+    columns:
+      - name: part_id
+        data_tests: [not_null, unique]       # La colonne part_id est la clé primaire de la table, donc elle ne doit jamais être vide et doit être unique. 
+      - name: list_price
+        data_tests: [not_null] 
+      - name: uomdbt
+        data_tests: [not_null]
