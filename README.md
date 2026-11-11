@@ -107,15 +107,15 @@ agrimeca-supplychain-de/
 
 | Étape | Statut |
 | --- | --- |
-| API ERP simulée sur Azure, ingestion robuste avec reprise | fait |
-| Bronze Auto Loader, contrôles de complétude et d'idempotence | fait |
-| Taux de change BCE, Job quotidien | fait |
-| Silver dbt : staging, règles de gestion, quarantaine, tests | fait |
-| Historisation SCD2 (noms de fournisseurs, prix) | à venir |
-| Gold : modèle en étoile, OTIF, délais, ABC | prochaine étape |
-| Ingestion incrémentale et orchestration complète | à venir |
-| CI GitHub Actions (`ruff`, `pytest`, `dbt parse`) | à venir |
-| Power BI et modèle IA de risque de retard | à venir |
+| API ERP simulée sur Azure, ingestion robuste avec reprise | ok |
+| Bronze Auto Loader, contrôles de complétude et d'idempotence | ok |
+| Taux de change BCE, Job quotidien | ok |
+| Silver dbt : staging, règles de gestion, quarantaine, tests | ok |
+| Historisation SCD2 (noms de fournisseurs, prix) | ok |
+| Gold : modèle en étoile, OTIF, délais, ABC | ok |
+| Ingestion incrémentale et orchestration complète | ok |
+| CI GitHub Actions (`ruff`, `pytest`, `dbt parse`) | ok |
+| Power BI et modèle IA de risque de retard | ok|
 
 ## Documentation
 
