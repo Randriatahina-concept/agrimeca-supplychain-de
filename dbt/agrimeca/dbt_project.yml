@@ -31,5 +31,6 @@ clean-targets:         # directories to be removed by `dbt clean`
 # files using the `{{ config(...) }}` macro.
 models:
   agrimeca:
-    # Config indicated by + and applies to all files under models/example/
-      +materialized: table # chaque modèle créé une table Delta dans le catalogue de données Unity Catalog
+    +materialized: table      # chaque modèle crée une table Delta dans Unity Catalog
+    marts:
+      +schema: gold           # les modèles de models/marts/ vont dans supplychain.gold
