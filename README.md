@@ -15,10 +15,11 @@ Projet de data engineering de bout en bout : ingestion d'une **API ERP** (OAuth,
 5. [Ingestion API vers le Volume](#ingestion-api-vers-le-volume)
 6. [Exécution locale et exécution Databricks](#exécution-locale-et-exécution-databricks)
 7. [Volumétrie traitée et performances](#volumétrie-traitée-et-performances)
-8. [Feuille de route](#feuille-de-route)
-9. [Structure du dépôt](#structure-du-dépôt)
-10. [Sécurité, qualité et coûts](#sécurité-qualité-et-coûts)
-11. [Dépannage](#dépannage)
+8. [Silver avec dbt : règles de gestion](#silver-avec-dbt--règles-de-gestion)
+9. [Feuille de route](#feuille-de-route)
+10. [Structure du dépôt](#structure-du-dépôt)
+11. [Sécurité, qualité et coûts](#sécurité-qualité-et-coûts)
+12. [Dépannage](#dépannage)
 
 ---
 
@@ -435,16 +436,91 @@ Résultat en local : `erp_suppliers` 43 200 lignes (21 600 identifiants distinct
 | Charger l'historique depuis une API lente | poste local, puis copie vers le Volume (`databricks fs cp`) | aucun calcul cloud facturé pendant l'attente de l'API |
 | Alimenter le pipeline au quotidien | Job Databricks, ingestion incrémentale | quelques pages par run au lieu de plusieurs milliers |
 
+## Silver avec dbt : règles de gestion
+
+Le Silver transforme le JSON brut du Bronze en tables relationnelles typées, dédoublonnées et contrôlées. Il est construit avec **dbt Core** (`dbt-databricks`) : dbt compile les modèles SQL sur le poste et les exécute sur le SQL Warehouse, qui écrit les tables Delta dans `supplychain.silver`. La connexion passe par OAuth (profil hors dépôt, aucun jeton stocké).
+
+### Modèles
+
+```text
+bronze.erp_suppliers ────────► stg_erp__suppliers ─────────────────────┐
+bronze.erp_parts ────────────► stg_erp__parts                           │
+bronze.erp_purchase_orders ──┬► stg_erp__purchase_orders ──────────────┤
+                             └► stg_erp__purchase_order_lines ─────────┼──► int_purchase_order_lines
+bronze.ecb_exchange_rates ───► stg_ecb__exchange_rates ─► int_fx_rates_daily ─┘
+```
+
+| Couche | Modèle | Grain (une ligne =) | Lignes |
+| --- | --- | --- | --- |
+| Staging ERP | `stg_erp__suppliers` | un fournisseur | 21 600 |
+| | `stg_erp__parts` | un article | 399 958 |
+| | `stg_erp__purchase_orders` | une commande (en-tête) | 1 290 380 |
+| | `stg_erp__purchase_order_lines` | une ligne de commande | 5 163 695 |
+| Staging BCE | `stg_ecb__exchange_rates` | une devise × un jour publié | ~4 700 |
+| Intermédiaire | `int_fx_rates_daily` | une devise × un jour calendaire | 7 959 (7 × 1 137) |
+| | `int_purchase_order_lines` | une ligne de commande enrichie | 5 163 695 |
+
+Le **staging** reste fidèle à la source : il extrait, type et dédoublonne, sans aucune correction métier. Les **modèles intermédiaires** appliquent les règles de gestion, et chaque correction laisse une trace.
+
+### Règles de gestion appliquées
+
+| # | Règle | Modèle | Mise en œuvre |
+| --- | --- | --- | --- |
+| R1 | Une ligne par enregistrement, dans sa version la plus récente | tous les `stg_` | `row_number()` par `source_id`, ordre `source_updated_at desc, _ingest_ts desc`, filtre sur le rang 1 ; protège contre les relectures des runs incrémentaux |
+| R2 | Les dates de l'ERP, livrées en trois formats (`aaaa-mm-jj`, `jj/mm/aaaa`, epoch en ms), sont ramenées à une DATE | en-têtes, lignes | macro `parse_erp_date`, écrite une fois et appelée pour `order_date` et `promised_date` ; valeur d'origine conservée (`*_raw`) |
+| R3 | Le tableau `lines` d'une commande devient une table de lignes | lignes | `explode(from_json(payload:lines, 'array<string>'))`, appliqué **après** le filtre de version (sinon les anciennes versions créeraient des doublons) ; clé `po_line_id` = commande + numéro de ligne |
+| R4 | Un taux de change existe pour chaque jour calendaire | taux quotidiens | calendrier complet ; le dernier taux BCE publié est reporté sur les week-ends et jours fériés (`last(…, true)`), sans jamais utiliser un taux futur ; EUR = 1 |
+| R5 | Une devise manquante est remplacée par la devise par défaut du fournisseur | lignes enrichies | `coalesce(devise de la ligne, devise du fournisseur)` ; trace `is_currency_imputed` |
+| R6 | Les volumes en boîtes de 12 sont ramenés en pièces | lignes enrichies | `quantity_base` = quantité × 12 et `uom_base` = `PCE` pour `BOX12` ; les kilos restent en kilos (aucun facteur de conversion) |
+| R7 | Le montant d'une ligne est converti en EUR au taux du jour de commande | lignes enrichies | `montant = quantité × prix unitaire` (le prix d'un `BOX12` est celui d'une boîte, donc la quantité d'origine) ; `montant_eur = montant / taux`, arrondi au centime |
+| R8 | Une ligne défectueuse est mise en quarantaine, jamais supprimée | lignes enrichies | `dq_issue` : `QTY_NEGATIVE_OR_ZERO`, `QTY_OUTLIER` (quantité ≥ 1 000), `ORDER_HEADER_MISSING`, `FX_RATE_MISSING` ; `is_valid` = aucun défaut ; le Gold ne lit que les lignes valides |
+| R9 | Une jointure ne perd ni ne duplique aucune ligne | lignes enrichies | `left join` (une ligne orpheline reste visible au lieu de disparaître), clés de jointure testées `unique`, comptage avant et après |
+
+### Contrôles de qualité
+
+Une trentaine de tests dbt s'exécutent à chaque `dbt build`, avant (sources) et après (modèles) chaque construction :
+
+| Type de test | Exemples | Ce qu'il protège |
+| --- | --- | --- |
+| `not_null` sur les sources Bronze | `source_id`, `source_updated_at` | le dédoublonnage ; si une source échoue, le modèle est sauté (`SKIP`) au lieu d'être reconstruit sur une entrée défectueuse |
+| `not_null`, `unique` | `supplier_id`, `part_id`, `po_id`, `po_line_id`, `fx_key` | une ligne par entité, donc des jointures sûres |
+| `accepted_values` | statuts, sites, devises, unités, codes `dq_issue` | une valeur nouvelle côté ERP est détectée avant de fausser un indicateur |
+| `relationships` | commande → fournisseur, ligne → commande, ligne → article | l'équivalent des clés étrangères |
+| `not_null` en `severity: warn` | devise de l'en-tête | suit un défaut connu (~2 %) sans bloquer le pipeline |
+
+Résultats au 11 novembre 2026 :
+
+| Contrôle | Résultat |
+| --- | --- |
+| Lignes de commande | 5 163 695, soit 4,00 par commande, sans doublon |
+| Dates promises non lues | 0 sur 5,16 millions |
+| Lignes non reçues | 1 928 161 (37,3 %) |
+| Lignes sans en-tête ou sans taux | 0 |
+| Quarantaine | 25 750 quantités aberrantes et 25 598 quantités négatives : 99,0 % de lignes valides |
+
+**0,5 % des lignes portaient 83,7 % des montants** (135,9 Md€ sur 162,4 Md€) : sans quarantaine, les dépenses d'achat seraient surestimées d'un facteur 6. Les lignes valides représentent 26,7 Md€, soit 5 218 € par ligne en moyenne.
+
+### Limite connue de la source simulée
+
+Le générateur de l'API tire un prix sans devise, puis l'étiquette avec la devise de la commande : un même prix nominal vaut environ 100 fois moins en INR qu'en EUR. La conversion est correcte (le montant moyen de chaque devise est le montant EUR divisé par son taux), mais les dépenses par pays sont dominées par les fournisseurs européens. Corriger ces prix reviendrait à inventer des données : la limite est documentée plutôt que masquée.
+
+### Lancer le Silver
+
+```zsh
+cd dbt/agrimeca
+dbt parse                                   # syntaxe, sans connexion : gratuit
+dbt build --select +int_purchase_order_lines   # sources testées, puis modèles et tests dans l'ordre des dépendances
+```
+
 ## Feuille de route
 
 La démarche suit une **tranche verticale** : le pipeline complet est d'abord construit pour les fournisseurs, puis étendu aux articles et aux commandes.
 
 | Étape | Contenu |
 | --- | --- |
-| Bronze avec Auto Loader | `cloudFiles`, checkpoint par table, `trigger(availableNow=True)`, idempotence vérifiée par une double exécution |
 | Ingestion incrémentale | `updated_since` et watermark `as_of` mémorisé entre deux runs, journal `ops.ingestion_runs` (la reprise sur curseur et les nouveaux essais sont en place) |
 | Tests | `pytest` + `responses` : pagination, renouvellement du jeton, `429`, reprise, incrémental |
-| dbt — Silver | sources Bronze, staging (extraction du JSON, typage, dates multi-formats), dédoublonnage des fournisseurs, conversion EUR avec les taux BCE, quarantaine des lignes invalides, historisation SCD2 |
+| dbt — Silver (suite) | historisation SCD2 des noms de fournisseurs et des prix catalogue (snapshots dbt) |
 | dbt — Gold | `dim_supplier`, `dim_part`, `fact_po_line` (incrémental `MERGE`), KPI mensuels, fiche fournisseur, délais P50/P90, commandes ouvertes |
 | Qualité | tests dbt génériques et spécifiques, documentation et lignage (`dbt docs`) |
 | Orchestration | Job Databricks : ingestion → Bronze → `dbt build`, alerte de volumétrie |
@@ -459,9 +535,14 @@ La démarche suit une **tranche verticale** : le pipeline complet est d'abord co
 agrimeca-supplychain-de/
 ├── src/erp_ingest/        # code Python d'ingestion (module importable)
 ├── scripts/               # lancements locaux
-├── notebooks/             # notebooks Databricks (format source .py)
+├── Notebook/              # notebooks Databricks (.ipynb) : ingestion, Bronze, taux BCE
 ├── tests/                 # tests pytest
-├── dbt/                   # projet dbt
+├── dbt/agrimeca/          # projet dbt
+│   ├── macros/            #   parse_erp_date
+│   └── models/
+│       ├── staging/erp/   #   stg_erp__* + _sources.yml + _stg_erp.yml
+│       ├── staging/ecb/   #   stg_ecb__exchange_rates
+│       └── intermediate/  #   int_fx_rates_daily, int_purchase_order_lines
 ├── jobs/                  # définition des Jobs Databricks
 ├── pyproject.toml         # dépendances et configuration (pytest, ruff)
 └── .gitignore
