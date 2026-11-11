@@ -20,5 +20,41 @@ models:                                      # les modèles décrits dans ce fic
         data_tests: [not_null, unique]       # La colonne part_id est la clé primaire de la table, donc elle ne doit jamais être vide et doit être unique. 
       - name: list_price
         data_tests: [not_null] 
-      - name: uomdbt
+      - name: uom
+        data_tests: [not_null]
+
+# Troisième modèle de staging : erp_purchase_orders pour les commandes d'achat
+  - name: stg_erp__purchase_orders
+    description: Commandes d'achat (en-tête), une ligne par commande, dernière version connue.
+    columns:
+      - name: po_id
+        data_tests: [not_null, unique]       # une ligne par commande
+      - name: order_date
+        data_tests: [not_null]               # échoue si un format de date n'est pas reconnu
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['OPEN', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']
+      - name: supplier_id
+        data_tests:
+          - not_null
+          - relationships:                   # chaque commande pointe vers un fournisseur connu
+              arguments:
+                to: ref('stg_erp__suppliers')
+                field: supplier_id
+      - name: plant_code
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['COL', 'SAV', 'MON', 'LYO', 'NAN']
+      - name: currency
+        data_tests:
+          - accepted_values:                 # les NULL ne sont pas contrôlés ici
+              arguments:
+                values: ['EUR', 'PLN', 'CNY', 'USD', 'GBP', 'INR', 'TRY']
+          - not_null:                        # défaut connu (~2 %) : signalé sans bloquer
+              config:
+                severity: warn
+      - name: is_deleted
         data_tests: [not_null]
