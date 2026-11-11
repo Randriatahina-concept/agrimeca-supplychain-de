@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: stg_ecb__exchange_rates
+    description: Taux de référence BCE, un par devise et par jour publié (unités de devise pour 1 EUR).
+    columns:
+      - name: fx_key
+        data_tests: [not_null, unique]
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['USD', 'GBP', 'PLN', 'CNY', 'INR', 'TRY']

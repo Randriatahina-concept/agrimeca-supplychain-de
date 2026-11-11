@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: int_fx_rates_daily
+    description: Un taux par devise et par jour calendaire, dernier taux publié reporté ; EUR = 1.
+    columns:
+      - name: fx_key
+        data_tests: [not_null, unique]
+      - name: rate
+        data_tests: [not_null]               # aucun jour sans taux
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['EUR', 'USD', 'GBP', 'PLN', 'CNY', 'INR', 'TRY']

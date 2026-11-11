@@ -1,17 +1,26 @@
-# La table source que dbt  lire depuis Unity Catalog est définie dans ce fichier YAML. Elle est ensuite utilisée dans les modèles dbt pour créer des tables de staging.
 version: 2                          # version du format des fichiers YAML de dbt
 
 sources:                            # liste des sources : des tables que dbt lit
   - name: bronze                    # nom logique de la source, utilisé dans les modèles : {{ source('bronze', …) }}
-    database: supplychain           # nom de la base de données Unity Catalog
+    database: supplychain           # nom du catalogue Unity Catalog
     schema: bronze                  # le schéma où se trouvent les tables : supplychain.bronze
-    tables:                         
-      - name: erp_suppliers         
+    tables:
+      - name: erp_suppliers         # supplychain.bronze.erp_suppliers : fournisseurs
         columns:                    # colonnes documentées ou testées (inutile de toutes les lister)
-          - name: source_id         # identifiant du fournisseur, copié du JSON par le Bronze
-            data_tests: [not_null]  # test : aucune ligne sans identifiant (sinon pas de dédoublonnage possible)
+          - name: source_id         # identifiant copié du JSON par le Bronze
+            data_tests: [not_null]  # sinon pas de dédoublonnage possible
           - name: source_updated_at # date de dernière modification dans l'ERP
-            data_tests: [not_null]  # test : toujours remplie (sinon impossible de choisir la version la plus récente)
-      - name: erp_parts             # supplychain.bronze.erp_parts 
-      - name: erp_purchase_orders   # supplychain.bronze.erp_purchase_orders : commandes d'achat
+            data_tests: [not_null]  # sinon impossible de choisir la version la plus récente
+      - name: erp_parts             # supplychain.bronze.erp_parts : articles
+        columns:
+          - name: source_id
+            data_tests: [not_null]
+          - name: source_updated_at
+            data_tests: [not_null]
+      - name: erp_purchase_orders   # supplychain.bronze.erp_purchase_orders : commandes d'achat, lignes incluses
+        columns:
+          - name: source_id
+            data_tests: [not_null]
+          - name: source_updated_at
+            data_tests: [not_null]
       - name: ecb_exchange_rates    # supplychain.bronze.ecb_exchange_rates : taux de change BCE
