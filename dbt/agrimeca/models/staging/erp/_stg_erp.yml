@@ -58,3 +58,29 @@ models:                                      # les modèles décrits dans ce fic
                 severity: warn
       - name: is_deleted
         data_tests: [not_null]
+  # Quatrième modèle de staging : erp_purchase_order_lines pour les lignes de commande d'achat
+  - name: stg_erp__purchase_order_lines
+    description: Lignes de commande d'achat, une ligne par (commande, numéro de ligne), dernière version.
+    columns:
+      - name: po_line_id
+        data_tests: [not_null, unique]
+      - name: po_id
+        data_tests:
+          - relationships:                   # chaque ligne appartient à une commande connue
+              arguments:
+                to: ref('stg_erp__purchase_orders')
+                field: po_id
+      - name: part_id
+        data_tests:
+          - not_null
+          - relationships:                   # chaque ligne porte sur un article connu
+              arguments:
+                to: ref('stg_erp__parts')
+                field: part_id
+      - name: promised_date
+        data_tests: [not_null]
+      - name: uom
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['PCE', 'BOX12', 'KG']

@@ -24,7 +24,7 @@ TABLES = {
 PAGE_SCHEMA = "data ARRAY<STRING>, _run_id STRING, _fetched_at STRING"
 spark =(SparkSession.builder
         .appName("agrimeca-bronze-local")
-        .master("local[*]") #tous les coeurs du Mac
+        .master("local[*]") # tous les coeurs du Mac
         .config("spark.driver.memory", "4g")  # 4 Go de RAM pour le driver (le Mac a 16 Go)
         .config("spark.sql.session.timeZone", "UTC")  # pour que les dates soient cohérentes avec l'API ERP
         .getOrCreate())

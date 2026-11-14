@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: dim_plant
+    description: Dimension des usines, une ligne par plant_code, nom le plus récemment connu.
+    columns:
+      - name: plant_code
+        data_tests:
+          - not_null
+          - unique
+      - name: plant_name
+        description: Nom de l'usine, tel que porté par la commande d'achat la plus récente.
+        data_tests:
+          - not_null
+  - name: dim_supplier
+    description: Dimension des fournisseurs, une ligne par supplier_id, nom le plus récemment connu.
+    columns:
+      - name: supplier_id
+        data_tests:
+          - not_null
+          - unique
+      - name : country_name
+        description: Nom du pays du fournisser selon l'interpretation  du code pays
+        data_tests:
+          - not_null
+      - name: region
+        description: Région du fournisseur selon le pays (Europe, Amérique, Asie, …)
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Zone euro', 'Amérique', 'Asie', 'Europe hors zone euro']
