@@ -8,7 +8,9 @@ Plateforme de données de bout en bout pour piloter la performance fournisseurs 
 
 ## 📊 Problématique
 
-**Contexte** — AgriMeca fabrique sur 5 sites (Colmar, Saverne, Monswiller, Lyon, Nantes) et achète auprès d'environ 21 600 fournisseurs dans 10 pays. Ses acheteurs ne savent pas répondre rapidement à des questions simples : quels fournisseurs livrent à l'heure et en totalité, où va l'argent des achats, quelles commandes relancer aujourd'hui.
+**Contexte** — AgriMeca conçoit et fabrique des **machines agricoles** : outils de travail du sol, semoirs, faucheuses et équipements de fenaison. Ses 5 usines (Colmar, Saverne, Monswiller, Lyon, Nantes) assemblent ces machines à partir de pièces achetées auprès d'environ 21 600 fournisseurs dans 10 pays : tôlerie et fonderie pour les châssis, transmissions et roulements pour les organes en mouvement, hydraulique et électronique pour les commandes, visserie, joints et peinture. Une pièce en retard peut arrêter une ligne d'assemblage en pleine saison.
+
+Les acheteurs ne savent pourtant pas répondre rapidement à des questions simples : quels fournisseurs livrent à l'heure et en totalité, où va l'argent des achats, quelles commandes relancer aujourd'hui.
 
 **Constats mesurés sur les données**
 
@@ -70,7 +72,7 @@ Règles de gestion du Silver : une ligne par enregistrement dans sa version la p
 - **Traçabilité** : chaque correction laisse une trace (devise imputée, valeur d'origine des dates conservée) ; chaque ligne Bronze remonte à son fichier source.
 - **Contrôles de complétude** : à chaque couche, le nombre de lignes est rapproché de la couche précédente (pages lues, lignes chargées, aucune ligne perdue par une jointure).
 - **Sécurité** : aucun secret dans le code ni dans Git (Key Vault, secret scope, connexion dbt en OAuth).
-- **Data lineage** : dépendances entre modèles gérées par dbt (`ref`, `source`), tables gouvernées par Unity Catalog.
+- **Lignage** : dépendances entre modèles gérées par dbt (`ref`, `source`), tables gouvernées par Unity Catalog.
 
 ## 🎯 Indicateurs
 
