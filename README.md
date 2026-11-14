@@ -70,7 +70,7 @@ Règles de gestion du Silver : une ligne par enregistrement dans sa version la p
 - **Traçabilité** : chaque correction laisse une trace (devise imputée, valeur d'origine des dates conservée) ; chaque ligne Bronze remonte à son fichier source.
 - **Contrôles de complétude** : à chaque couche, le nombre de lignes est rapproché de la couche précédente (pages lues, lignes chargées, aucune ligne perdue par une jointure).
 - **Sécurité** : aucun secret dans le code ni dans Git (Key Vault, secret scope, connexion dbt en OAuth).
-- **Lignage** : dépendances entre modèles gérées par dbt (`ref`, `source`), tables gouvernées par Unity Catalog.
+- **Data lineage** : dépendances entre modèles gérées par dbt (`ref`, `source`), tables gouvernées par Unity Catalog.
 
 ## 🎯 Indicateurs
 
