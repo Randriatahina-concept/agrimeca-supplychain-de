@@ -46,17 +46,6 @@ L'API ERP reproduit les contraintes d'une vraie API d'entreprise : jeton qui exp
 
 ## 🏗️ Architecture (médaillon)
 
-```mermaid
-flowchart LR
-    ERP["API ERP<br/>Azure Container Apps"] -->|Python · OAuth · curseur| VOL["Volume landing<br/>JSON / CSV bruts"]
-    BCE["API BCE<br/>taux de change"] -->|Job quotidien| VOL
-    VOL -->|Auto Loader| BR["Bronze"]
-    BR -->|dbt| SV["Silver"]
-    SV -->|dbt| GD["Gold"]
-    GD --> PBI["Power BI"]
-    GD --> IA["IA · MLflow"]
-```
-
 | Couche | Contenu | Outil |
 | --- | --- | --- |
 | 🥉 **Bronze** | réponses d'API brutes, une ligne par enregistrement, colonnes de traçabilité (run, fichier, dates de lecture et de chargement) ; doublons conservés | Auto Loader |
