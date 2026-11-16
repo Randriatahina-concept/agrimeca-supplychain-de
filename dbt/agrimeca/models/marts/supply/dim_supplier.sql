@@ -27,6 +27,6 @@ select
         when country_code in ('PL', 'GB', 'TR')       then 'Europe hors zone euro'   -- Turquie classée en Europe pour les achats
         when country_code in ('CN', 'IN')             then 'Asie'
         when country_code in ('US')                   then 'Amérique'
-    end as region,                                -- null si pays inconnu : détecté par les tests
+    end as region                               -- null si pays inconnu : détecté par les tests
 
 from {{ ref('stg_erp__suppliers') }}
