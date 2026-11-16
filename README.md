@@ -64,6 +64,8 @@ flowchart LR
 | 🥇 **Gold** | modèle en étoile : `fact_po_line`, `dim_supplier`, `dim_part`, `dim_plant`, `dim_date` | dbt |
 
 Règles de gestion du Silver : une ligne par enregistrement dans sa version la plus récente, dates ramenées à un seul format, lignes de commande dépliées, un taux de change pour chaque jour (week-ends compris), devise manquante remplacée par celle du fournisseur, boîtes de 12 converties en pièces, montants convertis en EUR au taux du jour de commande, lignes aberrantes mises en quarantaine et jamais supprimées.
+<img width="3200" height="1720" alt="image" src="https://github.com/user-attachments/assets/5e856db9-f9e9-4211-a8c0-a0b68315754d" />
+
 
 ## ✅ Qualité et gouvernance
 
