@@ -30,3 +30,18 @@ models:
           - accepted_values:
               arguments:
                 values: ['Zone euro', 'Amérique', 'Asie', 'Europe hors zone euro']
+  - name: dim_date
+    description: "Une ligne ligne par jour, de la première date de commande jusqu'à aujourd'hui + 1 an"
+    columns: 
+      - name: date_day
+        description: "Jour clé de la dimensin date"
+        data_tests:
+          - not_null
+          - unique
+      - name: day_of_week
+        description: "Numéro du jour de la semaine (1 = lundi … 7 = dimanche)"
+        data_tests:
+            - accepted_values:
+                arguments:
+                  values: [1, 2, 3, 4, 5, 6, 7]
+
