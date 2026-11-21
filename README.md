@@ -2,6 +2,8 @@
 
 Plateforme de données de bout en bout pour piloter la performance fournisseurs d'un industriel fictif, AgriMeca : ingestion d'une **API ERP** contrainte, architecture **médaillon** sur **Azure Databricks / Unity Catalog**, transformations et tests **dbt**, restitution **Power BI** et cas d'usage **IA**.
 
+![Architecture des données AgriMeca : architecture médaillon avec dbt sur Databricks](docs/images/architecture.png)
+
 > Projet personnel de portfolio. L'entreprise et son ERP sont simulés ; les volumes, les contraintes techniques et les défauts de données sont réalistes, et **tous les chiffres de ce document sont mesurés** sur les données du projet.
 
 ---
@@ -18,6 +20,8 @@ Les acheteurs ne savent pourtant pas répondre rapidement à des questions simpl
 - Les achats sont libellés en **7 devises** : impossible de comparer les fournisseurs sans conversion.
 - Les données de l'ERP sont **peu fiables** : 10 % de dates hors format, 2 % de devises manquantes, 1 % de quantités aberrantes, environ 8 % de fournisseurs en double.
 - Conséquence chiffrée : **0,5 % des lignes représentaient 84 % des montants d'achat**. Sans contrôle qualité, les dépenses seraient surestimées d'un facteur 6.
+- **19 % des lignes appartiennent à des commandes annulées** (5,1 Md€) : comptées comme des achats, elles fausseraient les dépenses d'autant.
+- Une fois les données fiabilisées, la mesure est sans appel : **OTIF fournisseurs de 60,5 %**. Une livraison sur trois arrive en retard, une sur dix est incomplète.
 
 **Objectif** — Construire une plateforme fiable et industrialisée qui collecte les données de l'ERP, les corrige de façon traçable, et calcule les indicateurs de pilotage des achats : fiabilité des fournisseurs, délais, dépenses, risques.
 
@@ -46,6 +50,8 @@ L'API ERP reproduit les contraintes d'une vraie API d'entreprise : jeton qui exp
 
 ## 🏗️ Architecture (médaillon)
 
+Le schéma en tête de page présente l'architecture cible et les composants de chaque couche ; l'avancement est suivi dans la feuille de route.
+
 | Couche | Contenu | Outil |
 | --- | --- | --- |
 | 🥉 **Bronze** | réponses d'API brutes, une ligne par enregistrement, colonnes de traçabilité (run, fichier, dates de lecture et de chargement) ; doublons conservés | Auto Loader |
@@ -53,12 +59,12 @@ L'API ERP reproduit les contraintes d'une vraie API d'entreprise : jeton qui exp
 | 🥇 **Gold** | modèle en étoile : `fact_po_line`, `dim_supplier`, `dim_part`, `dim_plant`, `dim_date` | dbt |
 
 Règles de gestion du Silver : une ligne par enregistrement dans sa version la plus récente, dates ramenées à un seul format, lignes de commande dépliées, un taux de change pour chaque jour (week-ends compris), devise manquante remplacée par celle du fournisseur, boîtes de 12 converties en pièces, montants convertis en EUR au taux du jour de commande, lignes aberrantes mises en quarantaine et jamais supprimées.
-<img width="3200" height="1720" alt="image" src="https://github.com/user-attachments/assets/5e856db9-f9e9-4211-a8c0-a0b68315754d" />
 
+Règles de gestion du Gold : toute clé du fait existe dans sa dimension (articles absents du référentiel conservés comme « Article inconnu ») ; commandes annulées conservées mais exclues des dépenses et des retards à relancer ; quantités reçues et commandées comparées dans la même unité ; OTIF calculé sur les seules lignes livrées.
 
 ## ✅ Qualité et gouvernance
 
-- **45 tests dbt**, exécutés à chaque construction : `unique`, `not_null`, `relationships` (clés étrangères), `accepted_values`, et tests sur les sources Bronze. Si une source échoue, les modèles qui en dépendent ne sont pas reconstruits.
+- **60 tests dbt**, exécutés à chaque construction : `unique`, `not_null`, `relationships` (chaque clé de la table de faits existe dans sa dimension), `accepted_values`, et tests sur les sources Bronze. Si une source échoue, les modèles qui en dépendent ne sont pas reconstruits.
 - **Quarantaine** : chaque ligne défectueuse porte un motif (`QTY_OUTLIER`, `QTY_NEGATIVE_OR_ZERO`…) et reste consultable ; le Gold ne lit que les lignes valides (99 %).
 - **Traçabilité** : chaque correction laisse une trace (devise imputée, valeur d'origine des dates conservée) ; chaque ligne Bronze remonte à son fichier source.
 - **Contrôles de complétude** : à chaque couche, le nombre de lignes est rapproché de la couche précédente (pages lues, lignes chargées, aucune ligne perdue par une jointure).
@@ -67,18 +73,18 @@ Règles de gestion du Silver : une ligne par enregistrement dans sa version la p
 
 ## 🎯 Indicateurs
 
-**Métier (couche Gold, spécifiés)**
+**Métier (couche Gold)**
 
-| Indicateur | Question |
-| --- | --- |
-| OTIF, décomposé en OT et IF | quels fournisseurs livrent à l'heure et en totalité ? |
-| Délai réel et écart au délai promis | combien de temps faut-il vraiment, et la promesse est-elle tenue ? |
-| Dépenses | où va l'argent, par catégorie, fournisseur, site et mois ? |
-| Classification ABC des articles | quels articles concentrent les achats ? |
-| Écart de prix d'achat | paie-t-on plus ou moins que le prix catalogue ? |
-| Concentration et articles mono-source | dépend-on trop de quelques fournisseurs ? |
-| Retards en cours | quelles commandes relancer aujourd'hui ? |
-| Taux de quarantaine | les données de l'ERP sont-elles fiables ? |
+| Indicateur | Question | Mesuré |
+| --- | --- | --- |
+| OTIF, décomposé en OT et IF | quels fournisseurs livrent à l'heure et en totalité ? | **60,5 %** (OT 67,2 %, IF 90,1 %) |
+| Délai réel et écart au délai promis | combien de temps faut-il vraiment, et la promesse est-elle tenue ? | dans `fact_po_line` |
+| Dépenses | où va l'argent, par catégorie, fournisseur, site et mois ? | hors commandes annulées |
+| Classification ABC des articles | quels articles concentrent les achats ? | dans `dim_part` |
+| Écart de prix d'achat | paie-t-on plus ou moins que le prix catalogue ? | à venir |
+| Concentration et articles mono-source | dépend-on trop de quelques fournisseurs ? | à venir |
+| Retards en cours | quelles commandes relancer aujourd'hui ? | dans `fact_po_line` |
+| Taux de quarantaine | les données de l'ERP sont-elles fiables ? | 1 % des lignes |
 
 **Pipeline (data engineering)**
 
@@ -125,10 +131,12 @@ agrimeca-supplychain-de/
 | Taux de change BCE, Job quotidien | fait |
 | Silver dbt : staging, règles de gestion, quarantaine, tests | fait |
 | Spécifications fonctionnelles du Gold | fait |
-| Gold : dimensions (`dim_plant` fait) et `fact_po_line` | en cours |
-| Tests métier (dates cohérentes, quantités positives) et fraîcheur des sources (`dbt source freshness`) | à venir |
+| Gold : modèle en étoile (`fact_po_line`, `dim_supplier`, `dim_part` avec classe ABC, `dim_plant`, `dim_date`) | fait |
+| Tests métier (cohérence statut et réception, dates, quantités) et fraîcheur des sources (`dbt source freshness`) | à venir |
+| `fact_po_line` incrémentale (`MERGE`) | à venir |
 | Historisation SCD2 (noms de fournisseurs, prix) | à venir |
 | Ingestion incrémentale et orchestration complète (ingestion → Bronze → `dbt build`) | à venir |
+| Données dégradées : le simulateur injecte de nouveaux défauts (formats, unités, incohérences de dates et de quantités, clés orphelines, doublons métier, évolution de schéma) ; le Silver s'adapte, et le taux de quarantaine est suivi dans le temps | à venir |
 | CI GitHub Actions (`ruff`, `pytest`, `dbt build` sur pull request) | à venir |
 | Power BI et modèle IA de risque de retard | à venir |
 
