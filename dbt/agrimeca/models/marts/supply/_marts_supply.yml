@@ -44,4 +44,59 @@ models:
             - accepted_values:
                 arguments:
                   values: [1, 2, 3, 4, 5, 6, 7]
-
+  - name: dim_part
+    description: "Articles : référentiel et articles commandés, avec classe ABC (A ≤ 80 %, B ≤ 95 % des dépenses cumulées, C au-delà, N jamais commandé)."
+    columns:
+      - name: part_id
+        description: "Identifiant de l'article (clé de la dimension)."
+        data_tests:
+          - unique
+          - not_null
+      - name: abc_class
+        description: "Classe ABC : A, B, C, ou N si l'article n'a jamais été commandé."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['A', 'B', 'C', 'N']
+      - name: is_unknown_part
+        description: "Vrai si l'article est commandé mais absent du référentiel (clé orpheline)."
+        data_tests:
+          - not_null
+  - name: fact_po_line
+    description: "Lignes de commande valides (une ligne par po_line_id), avec indicateurs de livraison OTIF, délais et retards."
+    columns:
+      - name: po_line_id
+        description: "Identifiant de la ligne de commande (clé du fait)."
+        data_tests:
+          - unique
+          - not_null
+      - name: part_id
+        description: "Article commandé → dim_part."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_part')
+                field: part_id
+      - name: supplier_id
+        description: "Fournisseur → dim_supplier."
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_supplier')
+                field: supplier_id
+      - name: plant_code
+        description: "Usine → dim_plant."
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_plant')
+                field: plant_code
+      - name: order_date
+        description: "Date de commande → dim_date."
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
